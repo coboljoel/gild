@@ -1,6 +1,8 @@
 import * as mkt from '../lib/market';
+import { useLiveQuotes } from '../lib/useQuote';
 
 export default function Settings({ startFmt, startingAmount, settingsAmt, setSettingsAmt, onSave, confirmReset, onResetClick }) {
+  useLiveQuotes([]); // no fetches; just re-render if live status flips after this mounts
   const live = mkt.hasLiveData();
   return (
     <div>

@@ -1,11 +1,24 @@
-// Market data layer: live quotes + search from Finnhub's free tier when
-// VITE_FINNHUB_API_KEY is set, falling back to deterministic sample data
-// otherwise. Finnhub's free plan doesn't include historical candles, so
-// the 90-day price series stays simulated even in live mode — it's
-// rescaled to end at whatever the current real (or sample) price is.
-const FINNHUB_KEY = import.meta.env.VITE_FINNHUB_API_KEY;
+// Market data layer: live quotes + search from Finnhub's free tier, falling
+// back to deterministic sample data when no live source is reachable.
+// Finnhub's free plan doesn't include historical candles, so the 90-day
+// price series stays simulated even in live mode — rescaled to end at
+// whatever the current (real or sample) price is.
+//
+// Two ways to reach Finnhub, tried in this order:
+//  1. VITE_FINNHUB_API_KEY in a local .env — calls Finnhub directly from the
+//     browser. Convenient for local dev, but Vite inlines VITE_ vars into the
+//     client bundle, so this key must never be set in a public deployment.
+//  2. /api/quote and /api/search — Vercel serverless functions (api/quote.js,
+//     api/search.js) that hold a server-only FINNHUB_API_KEY and proxy the
+//     request. Use this for any public deployment; the key never reaches
+//     the browser.
+const DIRECT_KEY = import.meta.env.VITE_FINNHUB_API_KEY;
 const FINNHUB_BASE = 'https://finnhub.io/api/v1';
 const QUOTE_TTL_MS = 20000;
+const ENDPOINTS = {
+  quote: { direct: '/quote', proxy: '/api/quote' },
+  search: { direct: '/search', proxy: '/api/search' }
+};
 
 function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
 function rng(seed) { let a = seed; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -59,7 +72,10 @@ export const UNIVERSE = [
 
 export function info(t) { return UNIVERSE.find(x => x.t === t) || null; }
 
-export function hasLiveData() { return Boolean(FINNHUB_KEY); }
+// True once a live fetch (direct or proxied) has actually succeeded —
+// reflects reality rather than just "is a key configured locally".
+let liveAvailable = false;
+export function hasLiveData() { return liveAvailable; }
 
 // ---- live quote cache + subscriptions ----
 const liveCache = new Map(); // ticker -> { price, prevClose, change, changePct, fetchedAt }
@@ -71,21 +87,30 @@ function notify() { version++; subs.forEach(fn => fn()); }
 export function subscribeQuotes(fn) { subs.add(fn); return () => subs.delete(fn); }
 export function getQuotesVersion() { return version; }
 
-async function finnhubGet(path, params) {
-  const url = new URL(FINNHUB_BASE + path);
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  url.searchParams.set('token', FINNHUB_KEY);
+async function apiGet(endpoint, params) {
+  const paths = ENDPOINTS[endpoint];
+  let url;
+  if (DIRECT_KEY) {
+    url = new URL(FINNHUB_BASE + paths.direct);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    url.searchParams.set('token', DIRECT_KEY);
+  } else {
+    url = new URL(paths.proxy, window.location.origin);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  }
   const res = await fetch(url);
-  if (!res.ok) throw new Error('finnhub ' + path + ' ' + res.status);
-  return res.json();
+  if (!res.ok) throw new Error('market api ' + endpoint + ' ' + res.status);
+  const data = await res.json();
+  if (!liveAvailable) { liveAvailable = true; notify(); }
+  return data;
 }
 
 export function fetchQuote(t, { force = false } = {}) {
-  if (!FINNHUB_KEY || !t) return Promise.resolve(null);
+  if (!t) return Promise.resolve(null);
   const cached = liveCache.get(t);
   if (!force && cached && Date.now() - cached.fetchedAt < QUOTE_TTL_MS) return Promise.resolve(cached);
   if (inflight.has(t)) return inflight.get(t);
-  const p = finnhubGet('/quote', { symbol: t })
+  const p = apiGet('quote', { symbol: t })
     .then(d => {
       if (!d || !d.c) return cached ?? null;
       const entry = { price: d.c, prevClose: d.pc || d.c, change: d.d ?? (d.c - (d.pc || d.c)), changePct: d.dp ?? 0, fetchedAt: Date.now() };
@@ -144,9 +169,8 @@ function localSearch(q) {
 export async function search(q) {
   q = (q || '').trim();
   if (!q) return [];
-  if (!FINNHUB_KEY) return localSearch(q);
   try {
-    const data = await finnhubGet('/search', { q });
+    const data = await apiGet('search', { q });
     const candidates = (data.result || [])
       .filter(r => (r.type === 'Common Stock' || r.type === 'ETP' || r.type === 'ETF') && !r.symbol.includes('.') && !r.symbol.includes(':'))
       .slice(0, 6);
