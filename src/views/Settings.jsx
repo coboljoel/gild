@@ -1,4 +1,7 @@
+import * as mkt from '../lib/market';
+
 export default function Settings({ startFmt, startingAmount, settingsAmt, setSettingsAmt, onSave, confirmReset, onResetClick }) {
+  const live = mkt.hasLiveData();
   return (
     <div>
       <h1 className="view-title">Settings</h1>
@@ -40,11 +43,20 @@ export default function Settings({ startFmt, startingAmount, settingsAmt, setSet
 
         <div className="card">
           <div className="settings-title">Data source</div>
-          <div className="settings-desc" style={{ lineHeight: 1.6 }}>
-            This app runs on built-in <span style={{ color: 'var(--gold)', fontWeight: 700 }}>sample data</span> for
-            ~44 popular US stocks and ETFs. To go live, swap <code>market.js</code> for a real quote provider and{' '}
-            <code>store.js</code> for a backend such as Supabase.
-          </div>
+          {live ? (
+            <div className="settings-desc" style={{ lineHeight: 1.6 }}>
+              Prices and search are <span style={{ color: 'var(--gold)', fontWeight: 700 }}>live</span>, via
+              Finnhub's free API. Its free tier doesn't include historical candles, so the 90-day performance
+              chart and sparklines stay simulated — rescaled to end at today's real price. <code>store.js</code> is
+              still local-only; swap it for a backend such as Supabase to persist across devices.
+            </div>
+          ) : (
+            <div className="settings-desc" style={{ lineHeight: 1.6 }}>
+              This app runs on built-in <span style={{ color: 'var(--gold)', fontWeight: 700 }}>sample data</span> for
+              ~44 popular US stocks and ETFs. Set <code>VITE_FINNHUB_API_KEY</code> (see the README) to switch to
+              live quotes and full-market search via Finnhub's free tier.
+            </div>
+          )}
         </div>
 
         <div className="card">

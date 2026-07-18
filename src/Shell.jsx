@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { store } from './lib/store';
 import * as mkt from './lib/market';
+import { useLiveQuotes } from './lib/useQuote';
 import { coachTips } from './lib/coach';
 import { fmt, fmt0, toPath } from './lib/format';
 import { NAV } from './lib/nav';
@@ -42,12 +43,16 @@ export default function Shell({ state }) {
     setMsg(null);
   }
 
+  const heldTickers = Object.keys(state.holdings);
+  const quotesVersion = useLiveQuotes([...heldTickers, 'SPY']);
+
   const rows = useMemo(() => (
     Object.entries(state.holdings).map(([t, h]) => {
       const q = mkt.getQuote(t);
       return q ? { t, shares: h.shares, cost: h.cost, q } : null;
     }).filter(Boolean)
-  ), [state.holdings]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [state.holdings, quotesVersion]);
 
   const invested = rows.reduce((a, r) => a + r.shares * r.q.price, 0);
   const total = invested + state.cash;
@@ -81,7 +86,8 @@ export default function Shell({ state }) {
     startingAmount: state.startingAmount,
     transactions: state.transactions,
     quoteOf: t => mkt.getQuote(t)
-  }), [state.holdings, state.cash, state.startingAmount, state.transactions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [state.holdings, state.cash, state.startingAmount, state.transactions, quotesVersion]);
 
   const totalFmt = fmt(total), cashFmt = fmt(state.cash), investedFmt = fmt(invested);
   const startFmt = fmt0(state.startingAmount);
@@ -127,7 +133,7 @@ export default function Shell({ state }) {
           ))}
         </nav>
         <div className="topnav-right">
-          <span className="badge">SAMPLE DATA</span>
+          <span className="badge">{mkt.hasLiveData() ? 'LIVE QUOTES' : 'SAMPLE DATA'}</span>
           <span className="total-value">{totalFmt}</span>
         </div>
       </header>

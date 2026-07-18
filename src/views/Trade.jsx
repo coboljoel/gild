@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import * as mkt from '../lib/market';
+import { useLiveQuotes } from '../lib/useQuote';
 import { fmt, toPath } from '../lib/format';
 
-const GREEN = '#2FC97C', RED = '#F35B5B', GOLD = '#D4AF37', MUT = '#9A9AA3';
+const GREEN = '#2FC97C', RED = '#F35B5B';
 const POPULAR = ['VOO', 'AAPL', 'MSFT', 'NVDA', 'KO', 'DIS'];
 
 function TickerRow({ q, onPick }) {
@@ -20,8 +22,22 @@ function TickerRow({ q, onPick }) {
 }
 
 export default function Trade({ query, setQuery, sel, onPick, qty, setQty, mode, setMode, msg, msgOk, holdings, cash, onTrade }) {
-  const results = mkt.search(query);
-  const showPopular = results.length === 0 && !sel;
+  const [results, setResults] = useState([]);
+
+  // Keep Popular + whatever's selected warm/live; re-renders this view as quotes arrive.
+  useLiveQuotes(sel ? [...POPULAR, sel] : POPULAR);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (!term) { setResults([]); return; }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      mkt.search(term).then(rows => { if (!cancelled) setResults(rows); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [query]);
+
+  const showPopular = results.length === 0 && !query.trim() && !sel;
 
   const q = sel ? mkt.getQuote(sel) : null;
   const spark = sel ? mkt.getSeries(sel) : null;
@@ -78,7 +94,9 @@ export default function Trade({ query, setQuery, sel, onPick, qty, setQty, mode,
           <svg className="spark-svg" viewBox="0 0 300 70" preserveAspectRatio="none">
             <path d={sparkPath} fill="none" stroke={sparkStroke} strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
           </svg>
-          <div className="spark-caption">Past 90 days · sample data</div>
+          <div className="spark-caption">
+            Past 90 days · {q.live ? 'shape is simulated, anchored to today’s live price' : 'sample data'}
+          </div>
 
           {own && (
             <div className="own-line">
@@ -117,7 +135,11 @@ export default function Trade({ query, setQuery, sel, onPick, qty, setQty, mode,
         </div>
       )}
 
-      <div className="hint-text">Sample prices for practice. The real build shows live quotes (~15&nbsp;min delayed on the free data tier).</div>
+      <div className="hint-text">
+        {mkt.hasLiveData()
+          ? 'Live quotes via Finnhub’s free tier. Search covers any US-listed stock or ETF.'
+          : 'Sample prices for practice. Set VITE_FINNHUB_API_KEY to switch this app to live quotes.'}
+      </div>
     </div>
   );
 }
